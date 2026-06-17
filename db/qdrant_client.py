@@ -213,6 +213,46 @@ async def vector_search(
 
 
 # ────────────────────────────────────────────────────────────────────
+# INTERNAL HELPERS
+# ────────────────────────────────────────────────────────────────────
+
+
+@with_cache_fallback(fallback_value=None)
+async def _get_raw_payload(point_id: str) -> dict | None:
+    """Fetch a single point's payload by ID.
+
+    Used by cache_manager.record_hit() to read the current lfu_count
+    before incrementing (Qdrant's set_payload does a literal overwrite,
+    not an atomic increment).
+    """
+    try:
+        client = await get_qdrant_client()
+        settings = get_settings()
+
+        results = await client.retrieve(
+            collection_name=settings.QDRANT_COLLECTION,
+            ids=[point_id],
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        if not results:
+            return None
+
+        point = results[0]
+        if point.payload is None:
+            return None
+        payload = dict(point.payload)
+        payload["_point_id"] = str(point.id)
+        return payload
+
+    except VectorDBError:
+        raise
+    except Exception as e:
+        raise VectorDBError("_get_raw_payload failed", original_error=e)
+
+
+# ────────────────────────────────────────────────────────────────────
 # WRITE PATH — protected by @fire_and_forget_with_log
 # ────────────────────────────────────────────────────────────────────
 
