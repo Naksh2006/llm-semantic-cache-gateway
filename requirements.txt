@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+fastembed
+litellm
+qdrant-client
+httpx
+structlog
+python-dotenv
+pytest
+pytest-asyncio
