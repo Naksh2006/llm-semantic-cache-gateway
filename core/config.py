@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 384
 
     # ── LLM Provider ──────────────────────────────────────────────
-    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MODEL: str = "gemini/gemini-2.5-flash"
     LLM_API_KEY: str = ""  # set via .env or environment variable
 
     # ── Cache Behaviour ───────────────────────────────────────────
