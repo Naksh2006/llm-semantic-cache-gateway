@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from api.streaming import stream_and_capture
 from core.config import get_settings
 from core.embeddings import get_embedding
-from core.exceptions import EmbeddingError
+from core.exceptions import ConfigurationError, EmbeddingError
 from core.router_engine import get_model_spec, route
 from db import cache_manager
 
@@ -46,6 +46,20 @@ class ChatRequest(BaseModel):
 
     messages: list[dict]
     model: str | None = None
+
+
+def _infer_provider_from_model(model: str) -> str | None:
+    """Infer a provider from common LiteLLM model identifiers."""
+    model_lower = model.lower()
+
+    if model_lower.startswith("gemini/") or "gemini" in model_lower:
+        return "gemini"
+    if model_lower.startswith("anthropic/") or "claude" in model_lower:
+        return "anthropic"
+    if model_lower.startswith(("openai/", "gpt-", "o1", "o3", "o4")):
+        return "openai"
+
+    return None
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -158,9 +172,27 @@ async def chat(
     #
     # Cost-aware routing: score the query complexity and pick the
     # cheapest model tier that can handle it well.
-    provider = settings.resolved_provider
-    routing_decision = await route(last_user_content, provider)
-    model = request.model or routing_decision.model_id
+    try:
+        provider = settings.resolved_provider
+        routing_decision = await route(last_user_content, provider)
+        model = request.model or routing_decision.model_id
+        model_provider = (
+            _infer_provider_from_model(request.model)
+            if request.model
+            else provider
+        )
+        api_key_provider = model_provider or provider
+        api_key = settings.api_key_for_provider(api_key_provider)
+    except ConfigurationError as e:
+        logger.warning(
+            "llm_configuration_error",
+            error=str(e),
+            tenant_id=x_tenant_id,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={"error": "llm provider is not configured"},
+        )
 
     logger.info(
         "routing_decision",
@@ -169,7 +201,7 @@ async def chat(
 
     # Look up the cost spec for the selected model (may be None if
     # the user overrode with a custom model string).
-    model_spec = get_model_spec(model, provider)
+    model_spec = get_model_spec(model, api_key_provider)
 
     # IMPORTANT: background_tasks.add_task inside _on_complete works
     # correctly here because _on_complete is awaited from within the
@@ -200,7 +232,7 @@ async def chat(
         logger.info(
             "cost_estimate",
             model=model,
-            provider=provider,
+            provider=api_key_provider,
             input_tokens_approx=input_tokens_approx,
             output_tokens_approx=output_tokens_approx,
             cost_usd=round(cost_usd, 6),
@@ -215,8 +247,6 @@ async def chat(
             full_response,
         )
 
-    # Resolve the API key for the detected provider
-    api_key = settings.resolved_api_key
     generator = stream_and_capture(
         request.messages, model, _on_complete, api_key
     )
@@ -225,7 +255,7 @@ async def chat(
         "cache_miss",
         tenant_id=x_tenant_id,
         model=model,
-        provider=provider,
+        provider=api_key_provider,
         tier=routing_decision.tier,
         complexity=routing_decision.complexity_score,
     )

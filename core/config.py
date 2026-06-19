@@ -20,6 +20,7 @@ Provider resolution (BYOK):
 """
 
 from functools import lru_cache
+from typing import ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -65,6 +66,12 @@ class Settings(BaseSettings):
     LFU_SPIKE_THRESHOLD: int = 10
     LFU_SPIKE_TTL_EXTENSION: int = 7200
 
+    _SUPPORTED_PROVIDERS: ClassVar[set[str]] = {
+        "gemini",
+        "openai",
+        "anthropic",
+    }
+
     @property
     def resolved_provider(self) -> str:
         """Determine the active LLM provider.
@@ -82,7 +89,14 @@ class Settings(BaseSettings):
         """
         # 1. Explicit override wins
         if self.LLM_PROVIDER:
-            return self.LLM_PROVIDER.lower()
+            provider = self.LLM_PROVIDER.lower()
+            if provider not in self._SUPPORTED_PROVIDERS:
+                available = ", ".join(sorted(self._SUPPORTED_PROVIDERS))
+                raise ConfigurationError(
+                    f"Invalid LLM_PROVIDER '{self.LLM_PROVIDER}'. "
+                    f"Expected one of: {available}."
+                )
+            return provider
 
         # 2-4. Auto-detect from BYOK keys
         if self.GEMINI_API_KEY:
@@ -115,13 +129,35 @@ class Settings(BaseSettings):
 
         Checks provider-specific keys first, falls back to LLM_API_KEY.
         """
-        provider = self.resolved_provider
+        return self.api_key_for_provider(self.resolved_provider)
+
+    def api_key_for_provider(self, provider: str) -> str:
+        """Return the configured API key for a specific provider.
+
+        Used when a request-level model override implies a provider that
+        differs from the globally resolved provider. Falls back to the
+        legacy LLM_API_KEY for backward compatibility.
+        """
+        provider = provider.lower()
+        if provider not in self._SUPPORTED_PROVIDERS:
+            available = ", ".join(sorted(self._SUPPORTED_PROVIDERS))
+            raise ConfigurationError(
+                f"Invalid LLM provider '{provider}'. "
+                f"Expected one of: {available}."
+            )
+
         key_map = {
             "gemini": self.GEMINI_API_KEY,
             "openai": self.OPENAI_API_KEY,
             "anthropic": self.ANTHROPIC_API_KEY,
         }
-        return key_map.get(provider) or self.LLM_API_KEY
+        api_key = key_map[provider] or self.LLM_API_KEY
+        if not api_key:
+            raise ConfigurationError(
+                f"No API key configured for provider '{provider}'. Set "
+                f"{provider.upper()}_API_KEY or the legacy LLM_API_KEY."
+            )
+        return api_key
 
 
 @lru_cache
