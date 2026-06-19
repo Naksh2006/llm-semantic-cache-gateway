@@ -1,6 +1,6 @@
 """Custom exception hierarchy for the LLM Semantic Cache Gateway.
 
-Three domain exceptions cover the entire error surface:
+Four domain exceptions cover the entire error surface:
 
 • **VectorDBError** — any Qdrant failure (network, timeout, missing
   collection, malformed filter, etc.).  This is the ONLY exception the
@@ -9,6 +9,8 @@ Three domain exceptions cover the entire error surface:
   (model load, tokenisation, OOM).
 • **StreamingError** — failures while streaming LLM responses back to
   the caller (broken pipe, upstream disconnect).
+• **ConfigurationError** — raised when a required configuration value
+  is missing or invalid (e.g. no LLM provider API key set).
 """
 
 
@@ -68,3 +70,16 @@ class StreamingError(Exception):
         if self.original_error:
             return f"{self.message} (caused by {self.original_error!r})"
         return self.message
+
+
+class ConfigurationError(Exception):
+    """Raised when a required configuration value is missing or invalid.
+
+    Typically raised at first access (not import time) when no LLM
+    provider API key is found in the environment.
+    """
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+

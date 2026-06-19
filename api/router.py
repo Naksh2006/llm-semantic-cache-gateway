@@ -8,7 +8,8 @@ Endpoints:
       • Supports optional ``x-cache-threshold`` header for per-request
         similarity tuning (clamped to configured min/max).
       • On HIT: returns JSONResponse with cached content + X-Cache: HIT.
-      • On MISS: returns StreamingResponse (SSE) + X-Cache: MISS, then
+      • On MISS: routes query to the optimal model tier based on
+        complexity scoring, streams SSE response + X-Cache: MISS, then
         fires a background Qdrant write via on_complete callback.
 
   GET /v1/cache/stats
@@ -27,6 +28,7 @@ from api.streaming import stream_and_capture
 from core.config import get_settings
 from core.embeddings import get_embedding
 from core.exceptions import EmbeddingError
+from core.router_engine import get_model_spec, route
 from db import cache_manager
 
 logger = structlog.get_logger(__name__)
@@ -67,7 +69,8 @@ async def chat(
     3. Generate embedding for the user's query.
     4. Check cache: exact hash first, then semantic vector search.
     5. HIT  → return cached response as JSON, bump LFU in background.
-    6. MISS → stream LLM response via SSE, cache full text on completion.
+    6. MISS → route to optimal model, stream LLM response via SSE,
+       compute cost estimate, cache full text on completion.
     """
     settings = get_settings()
 
@@ -102,7 +105,6 @@ async def chat(
 
     # ── 3. Extract the last user message ───────────────────────────
     last_user_content = request.messages[-1]["content"]
-    model = request.model or settings.LLM_MODEL
 
     # ── 4. Generate embedding ──────────────────────────────────────
     try:
@@ -152,8 +154,23 @@ async def chat(
             },
         )
 
-    # ── 7. MISS → stream from LLM, cache on completion ────────────
+    # ── 7. MISS → route to optimal model, stream from LLM ─────────
     #
+    # Cost-aware routing: score the query complexity and pick the
+    # cheapest model tier that can handle it well.
+    provider = settings.resolved_provider
+    routing_decision = await route(last_user_content, provider)
+    model = request.model or routing_decision.model_id
+
+    logger.info(
+        "routing_decision",
+        **routing_decision.model_dump(),
+    )
+
+    # Look up the cost spec for the selected model (may be None if
+    # the user overrode with a custom model string).
+    model_spec = get_model_spec(model, provider)
+
     # IMPORTANT: background_tasks.add_task inside _on_complete works
     # correctly here because _on_complete is awaited from within the
     # same request's generator (in stream_and_capture) before the
@@ -162,6 +179,34 @@ async def chat(
     # Qdrant write still happens without blocking the client's
     # perceived latency.
     async def _on_complete(full_response: str) -> None:
+        # ── Approximate cost estimation ────────────────────────
+        # LiteLLM's streaming mode does NOT reliably expose token
+        # usage in the final chunk for all providers. As a known
+        # limitation, we approximate token counts using word-split
+        # as a proxy: ~1 word ≈ 1.3 tokens (conservative estimate).
+        input_text = last_user_content
+        input_tokens_approx = int(len(input_text.split()) * 1.3)
+        output_tokens_approx = int(len(full_response.split()) * 1.3)
+
+        cost_usd = 0.0
+        if model_spec:
+            cost_usd = (
+                (input_tokens_approx / 1000)
+                * model_spec.cost_per_1k_input
+                + (output_tokens_approx / 1000)
+                * model_spec.cost_per_1k_output
+            )
+
+        logger.info(
+            "cost_estimate",
+            model=model,
+            provider=provider,
+            input_tokens_approx=input_tokens_approx,
+            output_tokens_approx=output_tokens_approx,
+            cost_usd=round(cost_usd, 6),
+            tenant_id=x_tenant_id,
+        )
+
         background_tasks.add_task(
             cache_manager.store,
             x_tenant_id,
@@ -170,12 +215,19 @@ async def chat(
             full_response,
         )
 
-    generator = stream_and_capture(request.messages, model, _on_complete)
+    # Resolve the API key for the detected provider
+    api_key = settings.resolved_api_key
+    generator = stream_and_capture(
+        request.messages, model, _on_complete, api_key
+    )
 
     logger.info(
         "cache_miss",
         tenant_id=x_tenant_id,
         model=model,
+        provider=provider,
+        tier=routing_decision.tier,
+        complexity=routing_decision.complexity_score,
     )
 
     return StreamingResponse(

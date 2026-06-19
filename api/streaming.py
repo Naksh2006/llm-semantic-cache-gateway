@@ -7,7 +7,7 @@ Responsible for:
     completed answer can be cached in Qdrant after the stream ends.
   • Graceful handling of upstream errors — yields an SSE error frame
     before raising ``StreamingError`` so the client sees what happened.
-  • Emitting a final ``data: [DONE]\n\n`` sentinel per the OpenAI
+  • Emitting a final ``data: [DONE]\\n\\n`` sentinel per the OpenAI
     streaming protocol.
   • Tracking Time-To-First-Token (TTFT) for observability.
 """
@@ -26,7 +26,9 @@ logger = structlog.get_logger(__name__)
 
 
 async def stream_llm_response(
-    messages: list[dict], model: str
+    messages: list[dict],
+    model: str,
+    api_key: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream an LLM completion as SSE frames.
 
@@ -34,17 +36,23 @@ async def stream_llm_response(
     token as an SSE ``data:`` frame. Tracks TTFT (time-to-first-token)
     and logs it at INFO.
 
+    Args:
+        messages: Chat messages to send to the LLM.
+        model: LiteLLM model identifier (e.g. "gemini/gemini-2.5-flash").
+        api_key: Provider API key. Falls back to settings.resolved_api_key.
+
     On any exception: yields an SSE error frame so the client is notified,
     then raises ``StreamingError`` for the caller to handle.
     """
     settings = get_settings()
+    resolved_key = api_key or settings.resolved_api_key
 
     try:
         response = await litellm.acompletion(
             model=model,
             messages=messages,
             stream=True,
-            api_key=settings.LLM_API_KEY,
+            api_key=resolved_key,
         )
 
         first_token = True
@@ -104,6 +112,7 @@ async def stream_and_capture(
     messages: list[dict],
     model: str,
     on_complete: Callable[[str], Awaitable[None]],
+    api_key: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream SSE frames to the client while silently capturing the full text.
 
@@ -117,7 +126,7 @@ async def stream_and_capture(
     """
     collected_tokens: list[str] = []
 
-    async for sse_frame in stream_llm_response(messages, model):
+    async for sse_frame in stream_llm_response(messages, model, api_key):
         # Client receives the frame immediately via yield.
         yield sse_frame
 
