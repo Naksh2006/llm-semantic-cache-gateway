@@ -6,6 +6,7 @@ litellm
 qdrant-client
 httpx
 structlog
+slowapi
 python-dotenv
 pytest
 pytest-asyncio

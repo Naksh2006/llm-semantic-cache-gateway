@@ -19,8 +19,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.router import api_router
+from core.auth import BearerAuthMiddleware
 from core.config import get_settings
 from core.embeddings import get_embedding
+from core.rate_limit import setup_rate_limiting
 from db import cache_manager
 from db.qdrant_client import get_qdrant_client
 
@@ -144,6 +146,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Bearer-token auth (no-op when GATEWAY_API_KEY is empty) ────────
+app.add_middleware(BearerAuthMiddleware)
+
+# ── Per-IP rate limiting ───────────────────────────────────────────
+setup_rate_limiting(app)
 
 
 # ────────────────────────────────────────────────────────────────────

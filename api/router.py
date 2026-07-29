@@ -20,7 +20,7 @@ Endpoints:
 """
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Header
+from fastapi import APIRouter, BackgroundTasks, Header, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -28,6 +28,7 @@ from api.streaming import stream_and_capture
 from core.config import get_settings
 from core.embeddings import get_embedding
 from core.exceptions import ConfigurationError, EmbeddingError
+from core.rate_limit import limiter
 from core.router_engine import get_model_spec, route
 from db import cache_manager
 
@@ -68,8 +69,10 @@ def _infer_provider_from_model(model: str) -> str | None:
 
 
 @api_router.post("/chat", tags=["chat"], response_model=None)
+@limiter.limit(lambda: get_settings().RATE_LIMIT)
 async def chat(
-    request: ChatRequest,
+    request: Request,
+    body: ChatRequest,
     background_tasks: BackgroundTasks,
     x_tenant_id: str = Header(..., alias="x-tenant-id"),
     x_cache_threshold: float | None = Header(
@@ -118,7 +121,7 @@ async def chat(
         )
 
     # ── 3. Extract the last user message ───────────────────────────
-    last_user_content = request.messages[-1]["content"]
+    last_user_content = body.messages[-1]["content"]
 
     # ── 4. Generate embedding ──────────────────────────────────────
     try:
@@ -175,10 +178,10 @@ async def chat(
     try:
         provider = settings.resolved_provider
         routing_decision = await route(last_user_content, provider)
-        model = request.model or routing_decision.model_id
+        model = body.model or routing_decision.model_id
         model_provider = (
-            _infer_provider_from_model(request.model)
-            if request.model
+            _infer_provider_from_model(body.model)
+            if body.model
             else provider
         )
         api_key_provider = model_provider or provider
@@ -248,7 +251,7 @@ async def chat(
         )
 
     generator = stream_and_capture(
-        request.messages, model, _on_complete, api_key
+        body.messages, model, _on_complete, api_key
     )
 
     logger.info(

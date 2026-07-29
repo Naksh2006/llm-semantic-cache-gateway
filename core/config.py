@@ -58,6 +58,18 @@ class Settings(BaseSettings):
     # "anthropic". If unset, inferred from which API key is present.
     LLM_PROVIDER: str | None = None
 
+    # ── Gateway Authentication ─────────────────────────────────────
+    # If set, every request must carry an Authorization: Bearer <key>
+    # header matching this value.  If empty, auth is disabled (local
+    # dev convenience — never deploy without setting this).
+    GATEWAY_API_KEY: str = ""
+
+    # ── Rate Limiting ──────────────────────────────────────────────
+    # Per-IP request ceiling.  Uses ``limits`` library syntax:
+    #   "30/minute", "5/second", "100/hour", "5/second;100/hour"
+    # Set to empty string to disable rate limiting.
+    RATE_LIMIT: str = "30/minute"
+
     # ── Cache Behaviour ───────────────────────────────────────────
     DEFAULT_SIMILARITY_THRESHOLD: float = 0.92
     MIN_SIMILARITY_THRESHOLD: float = 0.70
