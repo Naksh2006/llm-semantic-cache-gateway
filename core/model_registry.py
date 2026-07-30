@@ -34,7 +34,7 @@ class ModelSpec(BaseModel):
 PROVIDER_MODELS: dict[str, list[ModelSpec]] = {
     "gemini": [
         ModelSpec(  # TODO: verify current model id + pricing
-            model_id="gemini/gemini-2.5-flash-lite",
+            model_id="gemini/gemini-2.0-flash",
             tier="fast",
             cost_per_1k_input=0.0001,
             cost_per_1k_output=0.0004,
