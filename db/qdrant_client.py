@@ -58,7 +58,10 @@ async def get_qdrant_client() -> AsyncQdrantClient:
     settings = get_settings()
 
     try:
-        client = AsyncQdrantClient(url=settings.QDRANT_URL)
+        client = AsyncQdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY,  # None for local, key for Cloud
+        )
 
         # ── Ensure collection exists ───────────────────────────────
         collections = await client.get_collections()

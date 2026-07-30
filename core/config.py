@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # ── Qdrant (single persistence layer) ──────────────────────────
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION: str = "llm_cache"
+    QDRANT_API_KEY: str | None = None  # set for Qdrant Cloud; None = local
 
     # ── Local Embedding Model ──────────────────────────────────────
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
