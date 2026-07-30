@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 384
 
     # ── LLM Provider (legacy single-key field) ─────────────────────
-    LLM_MODEL: str = "gemini/gemini-2.5-flash"
+    LLM_MODEL: str = "gemini/gemini-3.6-flash"
     LLM_API_KEY: str = ""  # legacy — still works as fallback
 
     # ── BYOK Provider Keys ─────────────────────────────────────────
